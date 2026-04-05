@@ -7,7 +7,8 @@ import threading
 import sqlite3
 import psutil
 import json
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
@@ -24,6 +25,20 @@ BACKUP_PATH = HOSTS_PATH + ".backup"
 LOCK_FILE = "session.lock"
 DB_FILE = "focus_stats.db"
 SETTINGS_FILE = "settings.json"
+
+# Memiczne/Gen Z Cytaty Motywacyjne
+GEN_Z_QUOTES = [
+    "Mniej TikToka, więcej kodu. 💻",
+    "Touch grass... ale dopiero po sesji. 🌿",
+    "Zrób to dla przyszłego siebie (i dla portfolio). 🚀",
+    "Bądź delulu, dopóki to nie stanie się trululu. Do roboty! ✨",
+    "Skup się. Zaraz będziesz mógł scrollować. 📱",
+    "GigaChad skupienia. Nie poddawaj się. 🗿",
+    "Slay the day! ✨💅",
+    "POV: jesteś programistą i właśnie fixujesz bugi. 🧑‍💻",
+    "NPC się poddają. Główny bohater pracuje dalej. 🎮",
+    "Zostaw tego Discorda w spokoju. 🤫"
+]
 
 # Ustawienia motywu CustomTkinter
 ctk.set_appearance_mode("dark")
@@ -58,6 +73,11 @@ class DatabaseManager:
         total_time = self.cursor.fetchone()[0]
         total_time = total_time if total_time is not None else 0
 
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        self.cursor.execute("SELECT SUM(duration_minutes) FROM sessions WHERE status='SUCCESS' AND substr(start_time, 1, 10) = ?", (today_str,))
+        today_time = self.cursor.fetchone()[0]
+        today_time = today_time if today_time is not None else 0
+
         self.cursor.execute("SELECT COUNT(*) FROM sessions WHERE status='SUCCESS'")
         success_count = self.cursor.fetchone()[0]
 
@@ -67,7 +87,35 @@ class DatabaseManager:
         self.cursor.execute("SELECT task_name, duration_minutes, status, start_time FROM sessions ORDER BY start_time DESC LIMIT 10")
         recent = self.cursor.fetchall()
 
-        return total_time, success_count, failed_count, recent
+        return total_time, today_time, success_count, failed_count, recent
+
+    def get_streak(self):
+        """Oblicza liczbę dni z rzędu (Streak / Płomienie 🔥)"""
+        self.cursor.execute("SELECT DISTINCT substr(start_time, 1, 10) FROM sessions WHERE status='SUCCESS' ORDER BY start_time DESC")
+        rows = self.cursor.fetchall()
+        
+        if not rows:
+            return 0
+            
+        streak = 0
+        today = datetime.now().date()
+        try:
+            last_date = datetime.strptime(rows[0][0], "%Y-%m-%d").date()
+        except:
+            return 0
+
+        if (today - last_date).days > 1:
+            return 0
+            
+        current_expected = last_date
+        for row in rows:
+            row_date = datetime.strptime(row[0], "%Y-%m-%d").date()
+            if row_date == current_expected:
+                streak += 1
+                current_expected -= timedelta(days=1)
+            else:
+                break
+        return streak
 
 class HostsBlocker:
     """Moduł 2: Bloker Sieciowy i Crash Recovery"""
@@ -158,7 +206,6 @@ class FocusApp:
         self.notification_timer_id = None
         self.tray_icon = None
 
-        # Tworzenie głównych widoków (Frames)
         self.setup_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.timer_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.settings_frame = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -169,7 +216,6 @@ class FocusApp:
         self.build_settings_ui()
         self.build_stats_ui()
 
-        # Pokazanie widoku początkowego
         self.setup_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -196,38 +242,45 @@ class FocusApp:
     # LOGIKA SYSTEM TRAY (Pasek Zadań)
     # ==========================
     def create_tray_image(self):
-        """Generuje prostą ikonkę dla paska zadań (zielony kwadracik)"""
         image = Image.new('RGB', (64, 64), color=(44, 201, 133))
         dc = ImageDraw.Draw(image)
         dc.rectangle((16, 16, 48, 48), fill=(30, 30, 30))
         return image
 
     def hide_to_tray(self):
-        """Chowa główne okno i uruchamia ikonę w Tray'u w osobnym wątku"""
-        self.root.withdraw() # Ukrycie okna
+        self.root.withdraw()
         image = self.create_tray_image()
         
-        # Menu pod prawym przyciskiem myszy na ikonce
         menu = pystray.Menu(pystray.MenuItem('Pokaż Focus Engine', self.show_from_tray))
         self.tray_icon = pystray.Icon("FocusEngine", image, "Focus Engine (Trwa sesja)", menu)
         
-        # Uruchamiamy w tle, żeby nie zablokować pętli CustomTkinter
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def show_from_tray(self, icon, item):
-        """Przywraca okno z Tray'a"""
         icon.stop()
         self.tray_icon = None
-        self.root.after(0, self.root.deiconify) # Bezpieczne przywrócenie okna z wątku UI
+        self.root.after(0, self.root.deiconify)
 
     # ==========================
     # WIDOK GŁÓWNY (SETUP)
     # ==========================
     def build_setup_ui(self):
-        title = ctk.CTkLabel(self.setup_frame, text="Zacznij Skupienie", font=("Helvetica", 28, "bold"))
-        title.pack(pady=(20, 30))
+        header_frame = ctk.CTkFrame(self.setup_frame, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(10, 20))
 
-        self.task_entry = ctk.CTkEntry(self.setup_frame, placeholder_text="Nad czym będziesz pracować?", width=300, height=40, font=("Helvetica", 14))
+        title = ctk.CTkLabel(header_frame, text="Zacznij Skupienie", font=("Helvetica", 28, "bold"))
+        title.pack(side="left", padx=10)
+
+        streak = self.db.get_streak()
+        self.main_streak_label = ctk.CTkLabel(header_frame, text=f"{streak} 🔥", font=("Helvetica", 26, "bold"), text_color="#FFA500")
+        self.main_streak_label.pack(side="right", padx=10)
+
+        self.category_var = ctk.StringVar(value="💻 Kodowanie")
+        categories = ["💻 Kodowanie", "📚 Nauka", "🧘‍♂️ Relaks", "🧹 Obowiązki", "🚀 Inne"]
+        self.category_menu = ctk.CTkOptionMenu(self.setup_frame, values=categories, variable=self.category_var, width=300, height=35, font=("Helvetica", 13))
+        self.category_menu.pack(pady=(0, 10))
+
+        self.task_entry = ctk.CTkEntry(self.setup_frame, placeholder_text="Szczegóły (np. projekt zaliczeniowy)", width=300, height=40, font=("Helvetica", 14))
         self.task_entry.pack(pady=(0, 20))
 
         self.time_label = ctk.CTkLabel(self.setup_frame, text="Czas trwania: 25 min", font=("Helvetica", 14))
@@ -257,33 +310,43 @@ class FocusApp:
     # ==========================
     def build_stats_ui(self):
         title = ctk.CTkLabel(self.stats_frame, text="📊 Twoje Statystyki", font=("Helvetica", 22, "bold"))
-        title.pack(pady=(10, 20))
+        title.pack(pady=(10, 15))
 
-        self.stats_total_label = ctk.CTkLabel(self.stats_frame, text="Łączny czas: 0 min", font=("Helvetica", 20, "bold"), text_color="#2CC985")
-        self.stats_total_label.pack(pady=(5, 5))
+        metrics_frame = ctk.CTkFrame(self.stats_frame, fg_color="#2b2b2b", corner_radius=10)
+        metrics_frame.pack(fill="x", padx=20, pady=(0, 15), ipady=10)
 
-        self.stats_success_label = ctk.CTkLabel(self.stats_frame, text="Ukończone sesje: 0 ✅", font=("Helvetica", 14))
-        self.stats_success_label.pack(pady=(2, 2))
+        self.stats_today_label = ctk.CTkLabel(metrics_frame, text="Dzisiaj: 0 min", font=("Helvetica", 18, "bold"), text_color="#2CC985")
+        self.stats_today_label.pack(pady=(5, 5))
 
-        self.stats_failed_label = ctk.CTkLabel(self.stats_frame, text="Przerwane sesje: 0 ❌ (Zwiędłe drzewa 🥀)", font=("Helvetica", 14), text_color="#E74C3C")
-        self.stats_failed_label.pack(pady=(2, 20))
+        self.stats_total_label = ctk.CTkLabel(metrics_frame, text="Łącznie: 0 min", font=("Helvetica", 13), text_color="#AAAAAA")
+        self.stats_total_label.pack(pady=(0, 10))
+
+        self.stats_success_label = ctk.CTkLabel(metrics_frame, text="Ukończone sesje: 0 ✅", font=("Helvetica", 13))
+        self.stats_success_label.pack()
+
+        self.stats_failed_label = ctk.CTkLabel(metrics_frame, text="Przerwane sesje: 0 ❌", font=("Helvetica", 13), text_color="#E74C3C")
+        self.stats_failed_label.pack()
 
         ctk.CTkLabel(self.stats_frame, text="Ostatnie zadania:", font=("Helvetica", 12, "bold")).pack(anchor="w", padx=20)
-        self.recent_sessions_textbox = ctk.CTkTextbox(self.stats_frame, width=410, height=180, state="disabled")
-        self.recent_sessions_textbox.pack(pady=(5, 20), padx=20)
+        self.recent_sessions_textbox = ctk.CTkTextbox(self.stats_frame, width=410, height=160, state="disabled")
+        self.recent_sessions_textbox.pack(pady=(5, 15), padx=20)
 
         back_btn = ctk.CTkButton(self.stats_frame, text="Wróć do Menu", width=200, font=("Helvetica", 12, "bold"), command=self.close_stats)
         back_btn.pack()
 
     def open_stats(self):
-        total_time, success_count, failed_count, recent = self.db.get_stats()
+        total_time, today_time, success_count, failed_count, recent = self.db.get_stats()
 
-        hours, mins = divmod(total_time, 60)
-        time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins} min"
+        h_total, m_total = divmod(total_time, 60)
+        total_str = f"{h_total}h {m_total}m" if h_total > 0 else f"{m_total} min"
 
-        self.stats_total_label.configure(text=f"Łączny czas skupienia: {time_str}")
+        h_today, m_today = divmod(today_time, 60)
+        today_str = f"{h_today}h {m_today}m" if h_today > 0 else f"{m_today} min"
+
+        self.stats_today_label.configure(text=f"Dzisiejsze skupienie: {today_str}")
+        self.stats_total_label.configure(text=f"Łączny czas historii: {total_str}")
         self.stats_success_label.configure(text=f"Ukończone sesje: {success_count} ✅")
-        self.stats_failed_label.configure(text=f"Przerwane sesje: {failed_count} ❌ (Zwiędłe drzewa 🥀)")
+        self.stats_failed_label.configure(text=f"Przerwane sesje: {failed_count} ❌")
 
         self.recent_sessions_textbox.configure(state="normal")
         self.recent_sessions_textbox.delete("1.0", tk.END)
@@ -311,19 +374,27 @@ class FocusApp:
         self.setup_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
     # ==========================
-    # WIDOK USTAWIEŃ
+    # WIDOK USTAWIEŃ I SKANER APLIKACJI
     # ==========================
     def build_settings_ui(self):
         title = ctk.CTkLabel(self.settings_frame, text="⚙️ Ustawienia Blokad", font=("Helvetica", 22, "bold"))
         title.pack(pady=(10, 20))
 
         ctk.CTkLabel(self.settings_frame, text="Zablokowane strony (jedna w linijce):", font=("Helvetica", 12)).pack(anchor="w", padx=20)
-        self.sites_textbox = ctk.CTkTextbox(self.settings_frame, width=410, height=120)
-        self.sites_textbox.pack(pady=(5, 15), padx=20)
+        self.sites_textbox = ctk.CTkTextbox(self.settings_frame, width=410, height=90)
+        self.sites_textbox.pack(pady=(5, 10), padx=20)
 
-        ctk.CTkLabel(self.settings_frame, text="Zablokowane procesy (jeden w linijce):", font=("Helvetica", 12)).pack(anchor="w", padx=20)
-        self.processes_textbox = ctk.CTkTextbox(self.settings_frame, width=410, height=120)
-        self.processes_textbox.pack(pady=(5, 20), padx=20)
+        # Nagłówek dla procesów z przyciskiem skanowania obok
+        proc_header_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        proc_header_frame.pack(fill="x", padx=20)
+        
+        ctk.CTkLabel(proc_header_frame, text="Zablokowane procesy:", font=("Helvetica", 12)).pack(side="left")
+        
+        scan_btn = ctk.CTkButton(proc_header_frame, text="🔍 Skanuj komputer", width=120, height=24, font=("Helvetica", 11), fg_color="#2C82C9", hover_color="#1F5D90", command=self.open_app_scanner)
+        scan_btn.pack(side="right")
+
+        self.processes_textbox = ctk.CTkTextbox(self.settings_frame, width=410, height=90)
+        self.processes_textbox.pack(pady=(5, 15), padx=20)
 
         btn_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         btn_frame.pack(fill="x", padx=20)
@@ -333,6 +404,87 @@ class FocusApp:
 
         save_btn = ctk.CTkButton(btn_frame, text="Zapisz i Wróć", width=200, font=("Helvetica", 12, "bold"), command=self.save_and_close_settings)
         save_btn.pack(side="right")
+
+    def scan_apps(self):
+        """Skanuje pliki systemowe i aktualnie uruchomione procesy by wyciągnąć nazwy aplikacji"""
+        detected_apps = set()
+        
+        # 1. macOS: Skanowanie folderu /Applications (Najbardziej niezawodne dla Mac)
+        if sys.platform == 'darwin':
+            try:
+                for app_dir in ['/Applications', os.path.expanduser('~/Applications')]:
+                    if os.path.exists(app_dir):
+                        for item in os.listdir(app_dir):
+                            if item.endswith('.app'):
+                                detected_apps.add(item.replace('.app', ''))
+            except Exception as e:
+                print(f"Błąd skanowania /Applications: {e}")
+
+        # 2. Wszystkie platformy: Skanowanie aktualnie uruchomionych procesów użytkownika
+        try:
+            for proc in psutil.process_iter(['name']):
+                name = proc.info.get('name')
+                if name:
+                    name_lower = name.lower()
+                    # Ignorowanie ukrytych procesów systemowych by nie robić śmietnika
+                    system_procs = ['svchost.exe', 'explorer.exe', 'system', 'kernel_task', 'launchd', 'windowserver', 'sysmond']
+                    if name_lower not in system_procs and not name_lower.startswith(('com.apple', 'microsoft.')):
+                        detected_apps.add(name)
+        except Exception as e:
+             print(f"Błąd skanowania procesów: {e}")
+
+        # Sortowanie alfabetyczne
+        return sorted([app for app in detected_apps if app], key=lambda x: x.lower())
+
+    def open_app_scanner(self):
+        """Otwiera nowe okienko (popup) z listą aplikacji i checkboxami"""
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("Skaner Aplikacji")
+        popup.geometry("380x450")
+        popup.attributes('-topmost', True) # Trzyma na wierzchu
+        popup.grab_set() # Blokuje klikanie w inne okienka w tle
+
+        ctk.CTkLabel(popup, text="Wybierz programy do blokowania", font=("Helvetica", 16, "bold")).pack(pady=(15, 5))
+        ctk.CTkLabel(popup, text="Znaleziono zainstalowane oraz uruchomione aplikacje", font=("Helvetica", 11), text_color="gray").pack(pady=(0, 10))
+        
+        scroll_frame = ctk.CTkScrollableFrame(popup, width=320, height=280)
+        scroll_frame.pack(pady=5, padx=10, fill="both", expand=True)
+
+        apps = self.scan_apps()
+        checkbox_vars = {}
+
+        # Sprawdzamy co już jest wpisane w Textboxie, by od razu to zaznaczyć
+        current_manual_apps = [a.strip() for a in self.processes_textbox.get("1.0", tk.END).split('\n') if a.strip()]
+        current_manual_apps_lower = [a.lower() for a in current_manual_apps]
+        
+        for app in apps:
+            var = tk.BooleanVar(value=(app.lower() in current_manual_apps_lower))
+            chk = ctk.CTkCheckBox(scroll_frame, text=app, variable=var)
+            chk.pack(anchor="w", pady=4, padx=5)
+            checkbox_vars[app] = var
+
+        def save_selection():
+            final_list = []
+            
+            # Dodajemy zachowane aplikacje z textboxa (nawet te wpisane ręcznie, których nie wykrył skaner)
+            for m_app in current_manual_apps:
+                matched_in_scanner = next((a for a in apps if a.lower() == m_app.lower()), None)
+                if matched_in_scanner:
+                    if checkbox_vars[matched_in_scanner].get():
+                        final_list.append(m_app)
+                else:
+                    final_list.append(m_app)
+                    
+            # Dodajemy nowe zaznaczone aplikacje ze skanera
+            for app, var in checkbox_vars.items():
+                if var.get() and not any(a.lower() == app.lower() for a in final_list):
+                    final_list.append(app)
+                    
+            self.processes_textbox.delete("1.0", tk.END)
+            self.processes_textbox.insert("1.0", "\n".join(final_list))
+            popup.destroy()
+
+        ctk.CTkButton(popup, text="Dodaj zaznaczone", font=("Helvetica", 14, "bold"), command=save_selection).pack(pady=15)
 
     def open_settings(self):
         self.setup_frame.pack_forget()
@@ -364,23 +516,25 @@ class FocusApp:
     # ==========================
     def build_timer_ui(self):
         self.current_task_label = ctk.CTkLabel(self.timer_frame, text="Zadanie...", font=("Helvetica", 16), text_color="gray")
-        self.current_task_label.pack(pady=(20, 5))
+        self.current_task_label.pack(pady=(15, 5))
 
-        self.tree_label = ctk.CTkLabel(self.timer_frame, text="🌱", font=("Helvetica", 90))
-        self.tree_label.pack(pady=(10, 10))
+        self.tree_label = ctk.CTkLabel(self.timer_frame, text="🌱", font=("Helvetica", 80))
+        self.tree_label.pack(pady=(5, 5))
 
         self.timer_display = ctk.CTkLabel(self.timer_frame, text="00:00", font=("Helvetica", 70, "bold"), text_color="#2CC985")
-        self.timer_display.pack(pady=(5, 30))
+        self.timer_display.pack(pady=(5, 10))
+
+        self.quote_label = ctk.CTkLabel(self.timer_frame, text="...", font=("Helvetica", 12, "italic"), text_color="#888888", wraplength=350)
+        self.quote_label.pack(pady=(0, 25))
 
         stop_btn = ctk.CTkButton(self.timer_frame, text="PODDAJĘ SIĘ (ZABIJ DRZEWKO)", fg_color="#E74C3C", hover_color="#C0392B", height=40, width=250, font=("Helvetica", 14, "bold"), command=self.stop_session)
         stop_btn.pack()
 
-        # Nowy przycisk minimalizacji do paska zadań (Tray)
         tray_btn = ctk.CTkButton(self.timer_frame, text="⬇ Zwiń do paska (Tray)", fg_color="transparent", border_width=1, text_color="gray", command=self.hide_to_tray)
         tray_btn.pack(pady=(15, 0))
 
         self.notification_label = ctk.CTkLabel(self.timer_frame, text="", font=("Helvetica", 13, "bold"), text_color="#E74C3C")
-        self.notification_label.pack(pady=(10, 0))
+        self.notification_label.pack(pady=(5, 0))
 
     def notify_killed(self, proc_name):
         self.root.after(0, self.show_kill_notification, proc_name)
@@ -396,14 +550,14 @@ class FocusApp:
         self.notification_timer_id = None
 
     def start_session(self):
-        task = self.task_entry.get().strip()
+        category = self.category_var.get()
+        task_details = self.task_entry.get().strip()
         mins = int(self.time_slider.get())
 
-        if not task:
-            messagebox.showwarning("Brak zadania", "Proszę wpisać nad czym będziesz pracować!")
-            return
+        if not task_details:
+            task_details = "Praca domyślna"
 
-        self.task_name = task
+        self.task_name = f"{category} - {task_details}"
         self.duration_minutes = mins
         self.total_session_time = mins * 60
         self.time_left = self.total_session_time
@@ -411,6 +565,7 @@ class FocusApp:
 
         self.current_task_label.configure(text=f"Pracujesz nad:\n{self.task_name}")
         self.tree_label.configure(text="🌱")
+        self.quote_label.configure(text=random.choice(GEN_Z_QUOTES))
         self.clear_notification()
 
         self.hosts = HostsBlocker(self.settings["sites"])
@@ -448,7 +603,6 @@ class FocusApp:
             self.finish_session("SUCCESS")
 
     def finish_session(self, status):
-        # Automatyczne przywracanie z paska (jeśli była schowana)
         if self.tray_icon is not None:
             try:
                 self.tray_icon.stop()
@@ -469,7 +623,17 @@ class FocusApp:
         self.reset_ui()
 
     def stop_session(self):
-        if messagebox.askyesno("Ostrzeżenie", "Czy na pewno chcesz przerwać? Twoje drzewko uschnie (🥀), a statystyki zostaną zepsute!"):
+        dialog = ctk.CTkInputDialog(
+            text="Impulsywna decyzja? 🛑\nAby zabić drzewko i wyłączyć blokady, przepisz dokładnie:\n\npoddaję się", 
+            title="Ostrzeżenie przed przerwaniem"
+        )
+        user_input = dialog.get_input()
+
+        if user_input is None:
+            return
+
+        user_input = user_input.lower().strip()
+        if user_input in ["poddaję się", "poddaje sie", "poddaję sie"]:
             self.is_running = False
             self.guard.stop()
             self.hosts.restore()
@@ -477,8 +641,12 @@ class FocusApp:
             
             messagebox.showinfo("Porażka", "Twoje drzewko uschło 🥀. Nie poddawaj się, spróbuj ponownie później!")
             self.reset_ui()
+        else:
+            messagebox.showinfo("Ocalono!", "Literówka (albo podświadomie wcale nie chciałeś tego psuć).\nWracaj do pracy, GigaChadzie! 🗿")
 
     def reset_ui(self):
+        self.main_streak_label.configure(text=f"{self.db.get_streak()} 🔥")
+        
         self.timer_frame.pack_forget()
         self.setup_frame.pack(fill="both", expand=True, padx=20, pady=20)
         self.task_entry.delete(0, tk.END)
@@ -486,11 +654,10 @@ class FocusApp:
 
     def on_closing(self):
         if self.is_running:
-            # Pytanie, czy użytkownik woli schować aplikację, czy ją na twardo zamknąć (i zabić drzewko)
             if messagebox.askyesno("Minimalizacja", "Trwa sesja Focus Mode!\n\nCzy chcesz ukryć aplikację do paska zadań zamiast ją wyłączać?"):
                 self.hide_to_tray()
             else:
-                messagebox.showwarning("Ostrzeżenie", "Zablokowano zamknięcie. Użyj 'Przerwij', aby zabić drzewko i wyjść.")
+                messagebox.showwarning("Ostrzeżenie", "Zablokowano zamknięcie. Użyj przycisku 'Poddaję się' wewnątrz aplikacji, jeśli naprawdę musisz wyjść.")
         else:
             self.root.destroy()
 
