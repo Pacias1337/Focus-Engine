@@ -7,6 +7,8 @@ import threading
 import sqlite3
 import psutil
 from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 # --- KONFIGURACJA (CROSS-PLATFORM) ---
 if os.name == 'nt': # Windows
@@ -113,43 +115,155 @@ class ProcessGuard:
         if self.thread:
             self.thread.join()
 
-class FocusSession:
-    """Silnik Sesji (State Machine)"""
-    def __init__(self, task_name, duration_minutes, blocked_sites, blocked_processes):
-        self.task_name = task_name
-        self.duration_seconds = duration_minutes * 60
-        self.duration_minutes = duration_minutes
-        self.db = DatabaseManager()
-        self.hosts = HostsBlocker(blocked_sites)
-        self.guard = ProcessGuard(blocked_processes)
+class FocusApp:
+    """Główna aplikacja z Interfejsem Graficznym (UI)"""
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Focus Mode - Zbuduj Skupienie")
+        self.root.geometry("400x350")
+        self.root.configure(bg="#f4f4f9")
+        self.root.resizable(False, False)
 
-    def start(self):
-        print(f"\n🚀 Rozpoczynam sesję: '{self.task_name}' na {self.duration_minutes} minut.")
+        # Inicjalizacja modułów backendowych
+        self.db = DatabaseManager()
+        ZABLOKOWANE_STRONY = ["facebook.com", "youtube.com", "instagram.com"]
+        ZABLOKOWANE_PROCESY = ["discord.exe", "steam.exe", "discord", "steam"]
+        
+        self.hosts = HostsBlocker(ZABLOKOWANE_STRONY)
+        self.guard = ProcessGuard(ZABLOKOWANE_PROCESY)
+
+        self.time_left = 0
+        self.is_running = False
+        self.duration_minutes = 0
+        self.task_name = ""
+
+        self.setup_ui()
+        
+        # Zabezpieczenie przed zamknięciem okna "igreksem" w trakcie sesji
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def setup_ui(self):
+        """Tworzy elementy interfejsu użytkownika"""
+        style = ttk.Style()
+        style.configure("TLabel", background="#f4f4f9", font=("Helvetica", 12))
+        style.configure("TButton", font=("Helvetica", 12, "bold"))
+
+        # Kontener główny
+        self.main_frame = tk.Frame(self.root, bg="#f4f4f9", padx=20, pady=20)
+        self.main_frame.pack(expand=True, fill=tk.BOTH)
+
+        # Tytuł
+        title_label = tk.Label(self.main_frame, text="Zacznij Sesję Pracy", font=("Helvetica", 18, "bold"), bg="#f4f4f9", fg="#333")
+        title_label.pack(pady=(0, 20))
+
+        # Pole zadania
+        tk.Label(self.main_frame, text="Co będziesz robić?", font=("Helvetica", 10), bg="#f4f4f9").pack(anchor="w")
+        self.task_entry = ttk.Entry(self.main_frame, width=30, font=("Helvetica", 12))
+        self.task_entry.pack(fill=tk.X, pady=(0, 15))
+        self.task_entry.insert(0, "Praca nad kodem")
+
+        # Pole czasu
+        tk.Label(self.main_frame, text="Czas trwania (minuty):", font=("Helvetica", 10), bg="#f4f4f9").pack(anchor="w")
+        self.time_entry = ttk.Spinbox(self.main_frame, from_=1, to=120, width=5, font=("Helvetica", 12))
+        self.time_entry.pack(anchor="w", pady=(0, 25))
+        self.time_entry.set(25) # Domyślnie 25 minut (Pomodoro)
+
+        # Timer (Ukryty na starcie)
+        self.timer_label = tk.Label(self.main_frame, text="00:00", font=("Helvetica", 48, "bold"), bg="#f4f4f9", fg="#d32f2f")
+
+        # Przycisk Start
+        self.start_btn = tk.Button(self.main_frame, text="ROZPOCZNIJ", bg="#4CAF50", fg="white", font=("Helvetica", 12, "bold"), pady=10, command=self.start_session)
+        self.start_btn.pack(fill=tk.X)
+        
+        # Przycisk Przerwij (Ukryty na starcie)
+        self.stop_btn = tk.Button(self.main_frame, text="PODDAJĘ SIĘ (PRZERWIJ)", bg="#f44336", fg="white", font=("Helvetica", 10, "bold"), pady=5, command=self.stop_session)
+
+    def start_session(self):
+        """Rozpoczyna blokowanie i odliczanie"""
+        task = self.task_entry.get().strip()
+        try:
+            mins = int(self.time_entry.get())
+        except ValueError:
+            messagebox.showerror("Błąd", "Czas musi być liczbą!")
+            return
+
+        if not task or mins <= 0:
+            messagebox.showerror("Błąd", "Wprowadź poprawne dane.")
+            return
+
+        self.task_name = task
+        self.duration_minutes = mins
+        self.time_left = mins * 60
+        self.is_running = True
+
+        # Rozpoczęcie blokad
         self.hosts.apply_block()
         self.guard.start()
 
-        try:
-            # Odliczanie (Symulacja UI / Timera)
-            while self.duration_seconds > 0:
-                mins, secs = divmod(self.duration_seconds, 60)
-                sys.stdout.write(f"\r⏳ Pozostało: {mins:02d}:{secs:02d} (Wciśnij Ctrl+C aby przerwać)")
-                sys.stdout.flush()
-                time.sleep(1)
-                self.duration_seconds -= 1
-            
-            self._end_session("SUCCESS")
-            print("\n✅ Sesja zakończona sukcesem! Odblokowano system.")
-            print('\a') # Odtworzenie dźwięku systemowego
-            
-        except KeyboardInterrupt:
-            # Reakcja na przerwanie (Strict Mode)
-            print("\n❌ Sesja przerwana przez użytkownika!")
-            self._end_session("FAILED")
+        # Zmiana UI (ukrywanie formularza, pokazywanie timera)
+        self.task_entry.pack_forget()
+        self.time_entry.pack_forget()
+        self.start_btn.pack_forget()
+        for widget in self.main_frame.winfo_children():
+            if isinstance(widget, tk.Label) and widget.cget("text") in ["Co będziesz robić?", "Czas trwania (minuty):"]:
+                widget.pack_forget()
 
-    def _end_session(self, status):
+        self.timer_label.pack(pady=20)
+        self.stop_btn.pack(fill=tk.X, pady=(10, 0))
+
+        # Start pętli odliczania UI
+        self.update_timer()
+
+    def update_timer(self):
+        """Asynchroniczne odświeżanie timera w UI"""
+        if self.is_running and self.time_left > 0:
+            mins, secs = divmod(self.time_left, 60)
+            self.timer_label.config(text=f"{mins:02d}:{secs:02d}")
+            self.time_left -= 1
+            # Powtarzaj funkcję co 1000 ms (1 sekunda) bez blokowania okna
+            self.root.after(1000, self.update_timer)
+        elif self.is_running and self.time_left <= 0:
+            self.finish_session("SUCCESS")
+
+    def finish_session(self, status):
+        """Zakończenie z sukcesem"""
+        self.is_running = False
         self.guard.stop()
         self.hosts.restore()
         self.db.log_session(self.task_name, self.duration_minutes, status)
+        
+        if status == "SUCCESS":
+            print('\a') # Dźwięk systemowy
+            messagebox.showinfo("Koniec!", "Świetna robota! Sesja zakończona sukcesem.\nInternet i aplikacje odblokowane.")
+        
+        self.reset_ui()
+
+    def stop_session(self):
+        """Poddanie się przez użytkownika (Strict mode z ostrzeżeniem)"""
+        if messagebox.askyesno("Ostrzeżenie", "Czy na pewno chcesz przerwać? Zepsuje to Twoje statystyki w bazie danych!"):
+            self.is_running = False
+            self.guard.stop()
+            self.hosts.restore()
+            self.db.log_session(self.task_name, self.duration_minutes, "FAILED")
+            messagebox.showwarning("Przerwano", "Sesja przerwana. System odblokowany, ale zadanie oznaczono jako nieukończone.")
+            self.reset_ui()
+
+    def reset_ui(self):
+        """Przywraca UI do stanu początkowego"""
+        self.timer_label.pack_forget()
+        self.stop_btn.pack_forget()
+        
+        # Odtworzenie wszystkich elementów interfejsu (prosty restart okna)
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        self.setup_ui()
+
+    def on_closing(self):
+        """Blokada zamknięcia okna "igreksem" jeśli trwa sesja"""
+        if self.is_running:
+            messagebox.showwarning("Blokada", "Trwa sesja Focus Mode! Użyj przycisku 'Przerwij', jeśli musisz wyjść.")
+        else:
+            self.root.destroy()
 
 def is_admin():
     """Sprawdzenie uprawnień (Inicjalizacja)"""
@@ -161,7 +275,7 @@ def is_admin():
     except:
         return False
 
-# --- GŁÓWNY PRZEPŁYW (USER FLOW) ---
+# --- GŁÓWNY PRZEPŁYW ---
 if __name__ == "__main__":
     if not is_admin():
         print("BŁĄD: Ta aplikacja wymaga uprawnień administratora (sudo) do edycji pliku hosts.")
@@ -170,16 +284,14 @@ if __name__ == "__main__":
     # 1. Sprawdzenie czy był crash systemu
     HostsBlocker.check_crash_recovery()
 
-    # 2. Konfiguracja użytkownika
-    ZABLOKOWANE_STRONY = ["facebook.com", "youtube.com", "instagram.com"]
-    ZABLOKOWANE_PROCESY = ["discord.exe", "steam.exe", "discord", "steam"] # Wersje z .exe i bez (dla macOS)
-
-    sesja = FocusSession(
-        task_name="Pisanie kodu do portfolio",
-        duration_minutes=1, # Ustawione na 1 minutę do szybkich testów
-        blocked_sites=ZABLOKOWANE_STRONY,
-        blocked_processes=ZABLOKOWANE_PROCESY
-    )
-
-    # 3. Akcja
-    sesja.start()
+    # 2. Uruchomienie interfejsu graficznego (UI)
+    root = tk.Tk()
+    app = FocusApp(root)
+    
+    # Przechwytywanie Ctrl+C w terminalu, żeby mimo to oczyścić hosts
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        if app.is_running:
+            app.hosts.restore()
+            app.guard.stop()
