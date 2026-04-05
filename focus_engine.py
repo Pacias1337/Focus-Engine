@@ -50,6 +50,23 @@ class DatabaseManager:
         )
         self.conn.commit()
 
+    def get_stats(self):
+        """Pobiera dane do panelu statystyk"""
+        self.cursor.execute("SELECT SUM(duration_minutes) FROM sessions WHERE status='SUCCESS'")
+        total_time = self.cursor.fetchone()[0]
+        total_time = total_time if total_time is not None else 0
+
+        self.cursor.execute("SELECT COUNT(*) FROM sessions WHERE status='SUCCESS'")
+        success_count = self.cursor.fetchone()[0]
+
+        self.cursor.execute("SELECT COUNT(*) FROM sessions WHERE status='FAILED'")
+        failed_count = self.cursor.fetchone()[0]
+
+        self.cursor.execute("SELECT task_name, duration_minutes, status, start_time FROM sessions ORDER BY start_time DESC LIMIT 10")
+        recent = self.cursor.fetchall()
+
+        return total_time, success_count, failed_count, recent
+
 class HostsBlocker:
     """Moduł 2: Bloker Sieciowy i Crash Recovery"""
     def __init__(self, blocked_sites):
@@ -94,7 +111,7 @@ class ProcessGuard:
         self.blocked_processes = [p.lower() for p in blocked_processes]
         self.running = False
         self.thread = None
-        self.kill_callback = kill_callback # Funkcja wywoływana przy ubiciu procesu
+        self.kill_callback = kill_callback
 
     def _scan_and_kill(self):
         while self.running:
@@ -104,7 +121,6 @@ class ProcessGuard:
                     if proc_name and proc_name.lower() in self.blocked_processes:
                         print(f"[*] Strażnik ubił proces: {proc_name}")
                         proc.kill()
-                        # Jeśli mamy podpięty interfejs, wyślij do niego sygnał
                         if self.kill_callback:
                             self.kill_callback(proc_name)
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -126,29 +142,29 @@ class FocusApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Focus Engine")
-        self.root.geometry("450x550")
+        self.root.geometry("450x580")
         self.root.resizable(False, False)
 
-        # Inicjalizacja bazy
         self.db = DatabaseManager()
-        
-        # Wczytywanie ustawień z pliku (lub domyślnych, jeśli plik nie istnieje)
         self.settings = self.load_settings()
 
         self.time_left = 0
+        self.total_session_time = 0  # Potrzebne do obliczania wzrostu drzewka
         self.is_running = False
         self.duration_minutes = 0
         self.task_name = ""
-        self.notification_timer_id = None # ID dla timera czyszczącego komunikaty
+        self.notification_timer_id = None
 
         # Tworzenie głównych widoków (Frames)
         self.setup_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.timer_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.settings_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.stats_frame = ctk.CTkFrame(self.root, fg_color="transparent")
 
         self.build_setup_ui()
         self.build_timer_ui()
         self.build_settings_ui()
+        self.build_stats_ui()
 
         # Pokazanie widoku początkowego
         self.setup_frame.pack(fill="both", expand=True, padx=20, pady=20)
@@ -156,7 +172,6 @@ class FocusApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def load_settings(self):
-        """Wczytuje zablokowane strony i procesy z pliku JSON"""
         if os.path.exists(SETTINGS_FILE):
             try:
                 with open(SETTINGS_FILE, 'r') as f:
@@ -164,20 +179,20 @@ class FocusApp:
             except Exception as e:
                 print(f"Błąd odczytu pliku ustawień: {e}")
         
-        # Domyślne wartości przy pierwszym uruchomieniu
         return {
             "sites": ["facebook.com", "youtube.com", "instagram.com", "tiktok.com"],
             "processes": ["discord.exe", "steam.exe", "discord", "steam"]
         }
 
     def save_settings(self, new_settings):
-        """Zapisuje ustawienia do pliku JSON"""
         self.settings = new_settings
         with open(SETTINGS_FILE, 'w') as f:
             json.dump(self.settings, f, indent=4)
 
+    # ==========================
+    # WIDOK GŁÓWNY (SETUP)
+    # ==========================
     def build_setup_ui(self):
-        """Buduje główny widok konfiguracji (formularz)"""
         title = ctk.CTkLabel(self.setup_frame, text="Zacznij Skupienie", font=("Helvetica", 28, "bold"))
         title.pack(pady=(20, 30))
 
@@ -194,14 +209,83 @@ class FocusApp:
         start_btn = ctk.CTkButton(self.setup_frame, text="ROZPOCZNIJ SESJĘ", height=50, width=300, font=("Helvetica", 16, "bold"), command=self.start_session)
         start_btn.pack(pady=(0, 20))
 
-        settings_btn = ctk.CTkButton(self.setup_frame, text="⚙️ Ustawienia blokad", fg_color="transparent", border_width=1, hover_color="#2c2c2c", text_color="gray", command=self.open_settings)
-        settings_btn.pack(pady=(10, 0))
+        # Kontener na małe przyciski
+        bottom_btns_frame = ctk.CTkFrame(self.setup_frame, fg_color="transparent")
+        bottom_btns_frame.pack(pady=(10, 0))
+
+        settings_btn = ctk.CTkButton(bottom_btns_frame, text="⚙️ Ustawienia", width=140, fg_color="transparent", border_width=1, hover_color="#2c2c2c", text_color="gray", command=self.open_settings)
+        settings_btn.pack(side="left", padx=5)
+
+        stats_btn = ctk.CTkButton(bottom_btns_frame, text="📊 Statystyki", width=140, fg_color="transparent", border_width=1, hover_color="#2c2c2c", text_color="gray", command=self.open_stats)
+        stats_btn.pack(side="right", padx=5)
 
     def update_time_label(self, value):
         self.time_label.configure(text=f"Czas trwania: {int(value)} min")
 
+    # ==========================
+    # WIDOK STATYSTYK
+    # ==========================
+    def build_stats_ui(self):
+        title = ctk.CTkLabel(self.stats_frame, text="📊 Twoje Statystyki", font=("Helvetica", 22, "bold"))
+        title.pack(pady=(10, 20))
+
+        # Wyświetlacze liczbowe
+        self.stats_total_label = ctk.CTkLabel(self.stats_frame, text="Łączny czas: 0 min", font=("Helvetica", 20, "bold"), text_color="#2CC985")
+        self.stats_total_label.pack(pady=(5, 5))
+
+        self.stats_success_label = ctk.CTkLabel(self.stats_frame, text="Ukończone sesje: 0 ✅", font=("Helvetica", 14))
+        self.stats_success_label.pack(pady=(2, 2))
+
+        self.stats_failed_label = ctk.CTkLabel(self.stats_frame, text="Przerwane sesje: 0 ❌ (Zwiędłe drzewa 🥀)", font=("Helvetica", 14), text_color="#E74C3C")
+        self.stats_failed_label.pack(pady=(2, 20))
+
+        # Historia
+        ctk.CTkLabel(self.stats_frame, text="Ostatnie zadania:", font=("Helvetica", 12, "bold")).pack(anchor="w", padx=20)
+        self.recent_sessions_textbox = ctk.CTkTextbox(self.stats_frame, width=410, height=180, state="disabled")
+        self.recent_sessions_textbox.pack(pady=(5, 20), padx=20)
+
+        back_btn = ctk.CTkButton(self.stats_frame, text="Wróć do Menu", width=200, font=("Helvetica", 12, "bold"), command=self.close_stats)
+        back_btn.pack()
+
+    def open_stats(self):
+        total_time, success_count, failed_count, recent = self.db.get_stats()
+
+        hours, mins = divmod(total_time, 60)
+        time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins} min"
+
+        self.stats_total_label.configure(text=f"Łączny czas skupienia: {time_str}")
+        self.stats_success_label.configure(text=f"Ukończone sesje: {success_count} ✅")
+        self.stats_failed_label.configure(text=f"Przerwane sesje: {failed_count} ❌ (Zwiędłe drzewa 🥀)")
+
+        self.recent_sessions_textbox.configure(state="normal")
+        self.recent_sessions_textbox.delete("1.0", tk.END)
+
+        if not recent:
+            self.recent_sessions_textbox.insert("1.0", "Jeszcze brak sesji. Zasadź swoje pierwsze drzewko!\n")
+        else:
+            for task, duration, status, start_time in recent:
+                try:
+                    dt = datetime.strptime(start_time.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                    date_str = dt.strftime("%d.%m %H:%M")
+                except:
+                    date_str = start_time[:10]
+
+                icon = "🌳" if status == "SUCCESS" else "🥀"
+                self.recent_sessions_textbox.insert(tk.END, f"{date_str} | {duration} min | {task} {icon}\n")
+
+        self.recent_sessions_textbox.configure(state="disabled")
+
+        self.setup_frame.pack_forget()
+        self.stats_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+    def close_stats(self):
+        self.stats_frame.pack_forget()
+        self.setup_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+    # ==========================
+    # WIDOK USTAWIEŃ
+    # ==========================
     def build_settings_ui(self):
-        """Buduje widok panelu ustawień"""
         title = ctk.CTkLabel(self.settings_frame, text="⚙️ Ustawienia Blokad", font=("Helvetica", 22, "bold"))
         title.pack(pady=(10, 20))
 
@@ -223,7 +307,6 @@ class FocusApp:
         save_btn.pack(side="right")
 
     def open_settings(self):
-        """Otwiera panel ustawień i ładuje obecne dane"""
         self.setup_frame.pack_forget()
         self.settings_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
@@ -234,12 +317,10 @@ class FocusApp:
         self.processes_textbox.insert("1.0", "\n".join(self.settings["processes"]))
 
     def close_settings(self):
-        """Wraca do menu bez zapisywania"""
         self.settings_frame.pack_forget()
         self.setup_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
     def save_and_close_settings(self):
-        """Zapisuje zmiany z okienek do JSON i wraca do menu"""
         raw_sites = self.sites_textbox.get("1.0", tk.END).split("\n")
         sites = [s.strip() for s in raw_sites if s.strip()]
 
@@ -250,44 +331,40 @@ class FocusApp:
         self.save_settings(new_settings)
         self.close_settings()
 
+    # ==========================
+    # WIDOK TIMERA (SESJA)
+    # ==========================
     def build_timer_ui(self):
-        """Buduje widok odliczania"""
         self.current_task_label = ctk.CTkLabel(self.timer_frame, text="Zadanie...", font=("Helvetica", 16), text_color="gray")
-        self.current_task_label.pack(pady=(40, 10))
+        self.current_task_label.pack(pady=(20, 5))
 
-        self.timer_display = ctk.CTkLabel(self.timer_frame, text="00:00", font=("Helvetica", 80, "bold"), text_color="#2CC985")
-        self.timer_display.pack(pady=(20, 30))
+        # Dynamiczna ikona rosnącego drzewka (Grywalizacja)
+        self.tree_label = ctk.CTkLabel(self.timer_frame, text="🌱", font=("Helvetica", 90))
+        self.tree_label.pack(pady=(10, 10))
 
-        stop_btn = ctk.CTkButton(self.timer_frame, text="PODDAJĘ SIĘ (PRZERWIJ)", fg_color="#E74C3C", hover_color="#C0392B", height=40, width=250, font=("Helvetica", 14, "bold"), command=self.stop_session)
+        self.timer_display = ctk.CTkLabel(self.timer_frame, text="00:00", font=("Helvetica", 70, "bold"), text_color="#2CC985")
+        self.timer_display.pack(pady=(5, 30))
+
+        stop_btn = ctk.CTkButton(self.timer_frame, text="PODDAJĘ SIĘ (ZABIJ DRZEWKO)", fg_color="#E74C3C", hover_color="#C0392B", height=40, width=250, font=("Helvetica", 14, "bold"), command=self.stop_session)
         stop_btn.pack()
 
-        # Miejsce na komunikaty o zablokowanych aplikacjach
         self.notification_label = ctk.CTkLabel(self.timer_frame, text="", font=("Helvetica", 13, "bold"), text_color="#E74C3C")
-        self.notification_label.pack(pady=(30, 0))
+        self.notification_label.pack(pady=(20, 0))
 
     def notify_killed(self, proc_name):
-        """Odbiera sygnał z wątku w tle i przekazuje do głównego wątku UI"""
-        # Używamy root.after, aby bezpiecznie zmodyfikować UI z innego wątku
         self.root.after(0, self.show_kill_notification, proc_name)
 
     def show_kill_notification(self, proc_name):
-        """Pokazuje czerwony komunikat pod timerem"""
         self.notification_label.configure(text=f"🛑 Próba włączenia aplikacji '{proc_name}' zablokowana!")
-        
-        # Jeśli był już włączony timer kasujący komunikat, anuluj go
         if self.notification_timer_id is not None:
             self.root.after_cancel(self.notification_timer_id)
-            
-        # Zleć usunięcie komunikatu za 4 sekundy
         self.notification_timer_id = self.root.after(4000, self.clear_notification)
 
     def clear_notification(self):
-        """Czyści komunikat"""
         self.notification_label.configure(text="")
         self.notification_timer_id = None
 
     def start_session(self):
-        """Logika uruchamiająca sesję z wczytanymi ustawieniami"""
         task = self.task_entry.get().strip()
         mins = int(self.time_slider.get())
 
@@ -297,13 +374,14 @@ class FocusApp:
 
         self.task_name = task
         self.duration_minutes = mins
-        self.time_left = mins * 60
+        self.total_session_time = mins * 60
+        self.time_left = self.total_session_time
         self.is_running = True
 
         self.current_task_label.configure(text=f"Pracujesz nad:\n{self.task_name}")
-        self.clear_notification() # Upewnij się, że nie ma starych powiadomień
+        self.tree_label.configure(text="🌱") # Reset rośliny do nasionka
+        self.clear_notification()
 
-        # Inicjalizacja strażników (przekazujemy funkcję callback do powiadomień UI)
         self.hosts = HostsBlocker(self.settings["sites"])
         self.guard = ProcessGuard(self.settings["processes"], kill_callback=self.notify_killed)
 
@@ -317,9 +395,25 @@ class FocusApp:
 
     def update_timer(self):
         if self.is_running and self.time_left > 0:
+            # Obliczenia wyświetlania czasu
             mins, secs = divmod(self.time_left, 60)
             self.timer_display.configure(text=f"{mins:02d}:{secs:02d}")
             self.time_left -= 1
+            
+            # --- LOGIKA WZROSTU DRZEWKA ---
+            if self.total_session_time > 0:
+                progress = (self.total_session_time - self.time_left) / self.total_session_time
+                if progress < 0.25:
+                    self.tree_label.configure(text="🌱")
+                elif progress < 0.50:
+                    self.tree_label.configure(text="🌿")
+                elif progress < 0.75:
+                    self.tree_label.configure(text="🪴")
+                elif progress < 0.95:
+                    self.tree_label.configure(text="🌳")
+                else:
+                    self.tree_label.configure(text="🍎") # Owocuje na sam koniec!
+
             self.root.after(1000, self.update_timer)
         elif self.is_running and self.time_left <= 0:
             self.finish_session("SUCCESS")
@@ -332,17 +426,18 @@ class FocusApp:
         
         if status == "SUCCESS":
             print('\a')
-            messagebox.showinfo("Sukces!", "Świetna robota! Sesja zakończona sukcesem.\nInternet i aplikacje odblokowane.")
+            messagebox.showinfo("Sukces!", "Świetna robota! Wyhodowałeś piękne drzewo 🌳\nInternet i aplikacje odblokowane.")
         
         self.reset_ui()
 
     def stop_session(self):
-        if messagebox.askyesno("Ostrzeżenie", "Czy na pewno chcesz przerwać? Zepsuje to Twoje statystyki w bazie danych!"):
+        if messagebox.askyesno("Ostrzeżenie", "Czy na pewno chcesz przerwać? Twoje drzewko uschnie (🥀), a statystyki zostaną zepsute!"):
             self.is_running = False
             self.guard.stop()
             self.hosts.restore()
             self.db.log_session(self.task_name, self.duration_minutes, "FAILED")
             
+            messagebox.showinfo("Porażka", "Twoje drzewko uschło 🥀. Nie poddawaj się, spróbuj ponownie później!")
             self.reset_ui()
 
     def reset_ui(self):
@@ -353,7 +448,7 @@ class FocusApp:
 
     def on_closing(self):
         if self.is_running:
-            messagebox.showwarning("Blokada", "Trwa sesja Focus Mode! Użyj przycisku 'Przerwij', jeśli musisz wyjść.")
+            messagebox.showwarning("Blokada", "Trwa sesja! Użyj przycisku 'Przerwij', inaczej Twoje drzewko uschnie.")
         else:
             self.root.destroy()
 
