@@ -1,0 +1,14 @@
+{
+    "sites": [
+        "facebook.com",
+        "youtube.com",
+        "instagram.com",
+        "tiktok.com"
+    ],
+    "processes": [
+        "discord.exe",
+        "steam.exe",
+        "discord",
+        "steam.app"
+    ]
+}
