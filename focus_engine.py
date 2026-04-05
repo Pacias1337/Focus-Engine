@@ -406,35 +406,63 @@ class FocusApp:
         save_btn.pack(side="right")
 
     def scan_apps(self):
-        """Skanuje pliki systemowe i aktualnie uruchomione procesy by wyciągnąć nazwy aplikacji"""
+        """Skanuje pliki systemowe i odfiltrowane uruchomione procesy"""
         detected_apps = set()
         
-        # 1. macOS: Skanowanie folderu /Applications (Najbardziej niezawodne dla Mac)
+        # 1. macOS: Skanowanie głównych folderów aplikacji (Najbardziej niezawodne)
         if sys.platform == 'darwin':
             try:
+                # Usunięto /System/Applications, aby nie ściągać systemowych mikronarzędzi Apple
                 for app_dir in ['/Applications', os.path.expanduser('~/Applications')]:
                     if os.path.exists(app_dir):
                         for item in os.listdir(app_dir):
                             if item.endswith('.app'):
                                 detected_apps.add(item.replace('.app', ''))
             except Exception as e:
-                print(f"Błąd skanowania /Applications: {e}")
+                print(f"Błąd skanowania folderów Mac: {e}")
 
-        # 2. Wszystkie platformy: Skanowanie aktualnie uruchomionych procesów użytkownika
+        # 2. Wszystkie platformy: Skanowanie procesów z ekstremalnym filtrem
+        ignore_keywords = [
+            'helper', 'daemon', 'agent', 'update', 'service', 'broker', 
+            'crash', 'report', 'host', 'system', 'core', 'mgr', 'monitor',
+            'extension', 'widget', 'worker', 'intents', 'privacy', 'manager',
+            'provider', 'server', 'client', 'tool', 'applet', 'auth', 'ui'
+        ]
+
         try:
             for proc in psutil.process_iter(['name']):
                 name = proc.info.get('name')
-                if name:
-                    name_lower = name.lower()
-                    # Ignorowanie ukrytych procesów systemowych by nie robić śmietnika
-                    system_procs = ['svchost.exe', 'explorer.exe', 'system', 'kernel_task', 'launchd', 'windowserver', 'sysmond']
-                    if name_lower not in system_procs and not name_lower.startswith(('com.apple', 'microsoft.')):
-                        detected_apps.add(name)
+                if not name:
+                    continue
+                    
+                name_lower = name.lower()
+                
+                # Ignoruj procesy ukryte i bardzo krótkie
+                if name.startswith('.') or name.startswith('_') or len(name) <= 2:
+                    continue
+
+                # Ignoruj pakiety systemowe
+                if name_lower.startswith(('com.apple.', 'microsoft.', 'com.google.', 'nvidia', 'intel', 'amd')):
+                    continue
+                    
+                # [NOWOŚĆ] Ekstremalny filtr dla macOS: odrzuca "daemony" pisane w 100% małymi literami z 'd' na końcu
+                # np. watchdogd, weatherd, wifip2pd, xprotectd
+                if sys.platform == 'darwin' and name.islower() and name.endswith('d'):
+                    continue
+                    
+                # Odrzucanie na podstawie rozszerzonych słów kluczowych 
+                # np. WeatherIntents, WindowManager, webprivacyd
+                if any(kw in name_lower for kw in ignore_keywords):
+                    continue
+
+                detected_apps.add(name)
+                
         except Exception as e:
              print(f"Błąd skanowania procesów: {e}")
 
-        # Sortowanie alfabetyczne
-        return sorted([app for app in detected_apps if app], key=lambda x: x.lower())
+        # Usuwamy ewentualne puste nazwy
+        valid_apps = [app for app in detected_apps if app]
+        return sorted(valid_apps, key=lambda x: x.lower())
 
     def open_app_scanner(self):
         """Otwiera nowe okienko (popup) z listą aplikacji i checkboxami"""

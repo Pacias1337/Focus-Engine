@@ -8,8 +8,6 @@
     "processes": [
         "discord.exe",
         "steam.exe",
-        "discord",
-        "steam.app",
-        "Safari"
+        "discord"
     ]
 }
