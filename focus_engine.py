@@ -11,6 +11,8 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
+from PIL import Image, ImageDraw
+import pystray
 
 # --- KONFIGURACJA (CROSS-PLATFORM) ---
 if os.name == 'nt': # Windows
@@ -149,11 +151,12 @@ class FocusApp:
         self.settings = self.load_settings()
 
         self.time_left = 0
-        self.total_session_time = 0  # Potrzebne do obliczania wzrostu drzewka
+        self.total_session_time = 0
         self.is_running = False
         self.duration_minutes = 0
         self.task_name = ""
         self.notification_timer_id = None
+        self.tray_icon = None
 
         # Tworzenie głównych widoków (Frames)
         self.setup_frame = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -190,6 +193,34 @@ class FocusApp:
             json.dump(self.settings, f, indent=4)
 
     # ==========================
+    # LOGIKA SYSTEM TRAY (Pasek Zadań)
+    # ==========================
+    def create_tray_image(self):
+        """Generuje prostą ikonkę dla paska zadań (zielony kwadracik)"""
+        image = Image.new('RGB', (64, 64), color=(44, 201, 133))
+        dc = ImageDraw.Draw(image)
+        dc.rectangle((16, 16, 48, 48), fill=(30, 30, 30))
+        return image
+
+    def hide_to_tray(self):
+        """Chowa główne okno i uruchamia ikonę w Tray'u w osobnym wątku"""
+        self.root.withdraw() # Ukrycie okna
+        image = self.create_tray_image()
+        
+        # Menu pod prawym przyciskiem myszy na ikonce
+        menu = pystray.Menu(pystray.MenuItem('Pokaż Focus Engine', self.show_from_tray))
+        self.tray_icon = pystray.Icon("FocusEngine", image, "Focus Engine (Trwa sesja)", menu)
+        
+        # Uruchamiamy w tle, żeby nie zablokować pętli CustomTkinter
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def show_from_tray(self, icon, item):
+        """Przywraca okno z Tray'a"""
+        icon.stop()
+        self.tray_icon = None
+        self.root.after(0, self.root.deiconify) # Bezpieczne przywrócenie okna z wątku UI
+
+    # ==========================
     # WIDOK GŁÓWNY (SETUP)
     # ==========================
     def build_setup_ui(self):
@@ -209,7 +240,6 @@ class FocusApp:
         start_btn = ctk.CTkButton(self.setup_frame, text="ROZPOCZNIJ SESJĘ", height=50, width=300, font=("Helvetica", 16, "bold"), command=self.start_session)
         start_btn.pack(pady=(0, 20))
 
-        # Kontener na małe przyciski
         bottom_btns_frame = ctk.CTkFrame(self.setup_frame, fg_color="transparent")
         bottom_btns_frame.pack(pady=(10, 0))
 
@@ -229,7 +259,6 @@ class FocusApp:
         title = ctk.CTkLabel(self.stats_frame, text="📊 Twoje Statystyki", font=("Helvetica", 22, "bold"))
         title.pack(pady=(10, 20))
 
-        # Wyświetlacze liczbowe
         self.stats_total_label = ctk.CTkLabel(self.stats_frame, text="Łączny czas: 0 min", font=("Helvetica", 20, "bold"), text_color="#2CC985")
         self.stats_total_label.pack(pady=(5, 5))
 
@@ -239,7 +268,6 @@ class FocusApp:
         self.stats_failed_label = ctk.CTkLabel(self.stats_frame, text="Przerwane sesje: 0 ❌ (Zwiędłe drzewa 🥀)", font=("Helvetica", 14), text_color="#E74C3C")
         self.stats_failed_label.pack(pady=(2, 20))
 
-        # Historia
         ctk.CTkLabel(self.stats_frame, text="Ostatnie zadania:", font=("Helvetica", 12, "bold")).pack(anchor="w", padx=20)
         self.recent_sessions_textbox = ctk.CTkTextbox(self.stats_frame, width=410, height=180, state="disabled")
         self.recent_sessions_textbox.pack(pady=(5, 20), padx=20)
@@ -338,7 +366,6 @@ class FocusApp:
         self.current_task_label = ctk.CTkLabel(self.timer_frame, text="Zadanie...", font=("Helvetica", 16), text_color="gray")
         self.current_task_label.pack(pady=(20, 5))
 
-        # Dynamiczna ikona rosnącego drzewka (Grywalizacja)
         self.tree_label = ctk.CTkLabel(self.timer_frame, text="🌱", font=("Helvetica", 90))
         self.tree_label.pack(pady=(10, 10))
 
@@ -348,8 +375,12 @@ class FocusApp:
         stop_btn = ctk.CTkButton(self.timer_frame, text="PODDAJĘ SIĘ (ZABIJ DRZEWKO)", fg_color="#E74C3C", hover_color="#C0392B", height=40, width=250, font=("Helvetica", 14, "bold"), command=self.stop_session)
         stop_btn.pack()
 
+        # Nowy przycisk minimalizacji do paska zadań (Tray)
+        tray_btn = ctk.CTkButton(self.timer_frame, text="⬇ Zwiń do paska (Tray)", fg_color="transparent", border_width=1, text_color="gray", command=self.hide_to_tray)
+        tray_btn.pack(pady=(15, 0))
+
         self.notification_label = ctk.CTkLabel(self.timer_frame, text="", font=("Helvetica", 13, "bold"), text_color="#E74C3C")
-        self.notification_label.pack(pady=(20, 0))
+        self.notification_label.pack(pady=(10, 0))
 
     def notify_killed(self, proc_name):
         self.root.after(0, self.show_kill_notification, proc_name)
@@ -379,7 +410,7 @@ class FocusApp:
         self.is_running = True
 
         self.current_task_label.configure(text=f"Pracujesz nad:\n{self.task_name}")
-        self.tree_label.configure(text="🌱") # Reset rośliny do nasionka
+        self.tree_label.configure(text="🌱")
         self.clear_notification()
 
         self.hosts = HostsBlocker(self.settings["sites"])
@@ -395,12 +426,10 @@ class FocusApp:
 
     def update_timer(self):
         if self.is_running and self.time_left > 0:
-            # Obliczenia wyświetlania czasu
             mins, secs = divmod(self.time_left, 60)
             self.timer_display.configure(text=f"{mins:02d}:{secs:02d}")
             self.time_left -= 1
             
-            # --- LOGIKA WZROSTU DRZEWKA ---
             if self.total_session_time > 0:
                 progress = (self.total_session_time - self.time_left) / self.total_session_time
                 if progress < 0.25:
@@ -412,13 +441,22 @@ class FocusApp:
                 elif progress < 0.95:
                     self.tree_label.configure(text="🌳")
                 else:
-                    self.tree_label.configure(text="🍎") # Owocuje na sam koniec!
+                    self.tree_label.configure(text="🍎")
 
             self.root.after(1000, self.update_timer)
         elif self.is_running and self.time_left <= 0:
             self.finish_session("SUCCESS")
 
     def finish_session(self, status):
+        # Automatyczne przywracanie z paska (jeśli była schowana)
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.stop()
+            except:
+                pass
+            self.tray_icon = None
+            self.root.deiconify()
+
         self.is_running = False
         self.guard.stop()
         self.hosts.restore()
@@ -448,7 +486,11 @@ class FocusApp:
 
     def on_closing(self):
         if self.is_running:
-            messagebox.showwarning("Blokada", "Trwa sesja! Użyj przycisku 'Przerwij', inaczej Twoje drzewko uschnie.")
+            # Pytanie, czy użytkownik woli schować aplikację, czy ją na twardo zamknąć (i zabić drzewko)
+            if messagebox.askyesno("Minimalizacja", "Trwa sesja Focus Mode!\n\nCzy chcesz ukryć aplikację do paska zadań zamiast ją wyłączać?"):
+                self.hide_to_tray()
+            else:
+                messagebox.showwarning("Ostrzeżenie", "Zablokowano zamknięcie. Użyj 'Przerwij', aby zabić drzewko i wyjść.")
         else:
             self.root.destroy()
 
