@@ -1,6 +1,6 @@
 🌳 Focus Engine
 
-Focus Engine to nowoczesna aplikacja typu "Productivity & Focus", która pomaga wyeliminować rozpraszacze i budować zdrowe nawyki pracy. Projekt łączy techniki grywalizacji (hodowanie drzewek) z zaawansowanym blokowaniem procesów systemowych i stron interentowych.
+Focus Engine to nowoczesna aplikacja typu "Productivity & Focus", która pomaga wyeliminować rozpraszacze i budować zdrowe nawyki pracy. Projekt łączy techniki grywalizacji (hodowanie drzewek) z zaawansowanym blokowaniem procesów systemowych i stron internetowych.
 
 🚀 Kluczowe funkcje
 
