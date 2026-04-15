@@ -34,7 +34,7 @@ Pobierz plik FocusEngine.exe z sekcji Releases, uruchom i ciesz się skupieniem!
 
 Dla deweloperów:
 
-Sklonuj repozytorium: git clone https://github.com/TwojUser/FocusEngine.git
+Sklonuj repozytorium: git clone https://github.com/Pacias1337/Focus-Engine
 
 Stwórz środowisko wirtualne: python -m venv venv
 
