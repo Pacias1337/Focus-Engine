@@ -1,47 +1,32 @@
-🌳 Focus Engine
+# 🌳 Focus Engine
 
-Focus Engine to nowoczesna aplikacja typu "Productivity & Focus", która pomaga wyeliminować rozpraszacze i budować zdrowe nawyki pracy. Projekt łączy techniki grywalizacji (hodowanie drzewek) z zaawansowanym blokowaniem procesów systemowych i stron internetowych.
+**Focus Engine** is a modern Productivity & Focus application designed to eliminate distractions and foster healthy work habits. The project merges gamification techniques—such as growing virtual trees—with advanced system-level blocking of processes and websites.
 
-🚀 Kluczowe funkcje
+## 🚀 Key Features
 
-🛡️ Multi-Level Blocking: Blokowanie stron poprzez edycję systemowego pliku hosts oraz aktywne ubijanie procesów (np. Steam, Discord).
+* 🛡️ **Multi-Level Blocking:** Restricts access to distracting websites by editing the system `hosts` file and actively terminating specified processes (e.g., Steam, Discord).
+* 🌳 **Gamification:** Your deep work sessions provide life to a virtual tree. If you break your focus session prematurely, the tree withers.
+* ⚙️ **App Scanner:** An intelligent scanner that automatically detects installed applications, allowing you to add them to your blocklist with a single click.
+* 📊 **Advanced Statistics:** Track your daily focus time and task history. Includes a "streaks" system to keep you motivated and consistent.
+* 🌑 **Modern UI:** A sleek, dark-themed interface built with **CustomTkinter**, featuring System Tray support for seamless background operation.
+* 🛠️ **Crash Recovery:** Built-in safety mechanisms that automatically restore original system settings if the application closes unexpectedly.
 
-🌳 Gamification: Twoje skupienie zasila życie wirtualnego drzewka. Jeśli przerwiesz sesję – drzewko usycha.
+## 🛠️ Technology Stack
 
-⚙️ App Scanner: Inteligentny skaner, który wykrywa zainstalowane aplikacje i pozwala wybrać je do blokady jednym kliknięciem.
+* **Language:** Python 3.13+
+* **GUI:** CustomTkinter (Modern Desktop UI)
+* **Database:** SQLite3
+* **System Libraries:** * `psutil` (Process management)
+    * `pystray` & `Pillow` (System Tray integration)
 
-📊 Advanced Stats: Śledzenie dziennego czasu skupienia, historii zadań oraz system "płomieni" (streaks) motywujący do regularności.
+## 📦 Installation & Setup
 
-🌑 Modern UI: Ciemny interfejs zbudowany w CustomTkinter z obsługą System Tray (minimalizacja do paska).
+### For Users (Windows .exe)
+1. Download the `FocusEngine.exe` from the **Releases** section.
+2. Run the application and start focusing!
+*Note: Administrator privileges are required for system-level blocking.*
 
-🛠️ Crash Recovery: Automatyczne przywracanie ustawień systemowych w przypadku nagłego zamknięcia aplikacji.
-
-🛠️ Technologie
-
-Język: Python 3.13+
-
-GUI: CustomTkinter (Modern Desktop UI)
-
-Baza danych: SQLite3
-
-Biblioteki systemowe: psutil (zarządzanie procesami), pystray & Pillow (System Tray).
-
-📦 Instalacja i Uruchomienie
-
-Dla użytkowników (Wersja .exe):
-
-Pobierz plik FocusEngine.exe z sekcji Releases, uruchom i ciesz się skupieniem! (Wymaga uprawnień administratora).
-
-Dla deweloperów:
-
-Sklonuj repozytorium: git clone https://github.com/Pacias1337/Focus-Engine
-
-Stwórz środowisko wirtualne: python -m venv venv
-
-Zainstaluj zależności: pip install -r requirements.txt
-
-Uruchom jako administrator: python focus_engine.py
-
-👨‍💻 Autor
-
-Mateusz Paciej – [https://github.com/Pacias1337] | [https://www.linkedin.com/in/mateusz-paciej/]
+### For Developers
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/Pacias1337/Focus-Engine](https://github.com/Pacias1337/Focus-Engine)
